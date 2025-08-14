@@ -1,33 +1,39 @@
 namespace ssimu2{
 
-__launch_bounds__(256)
-__global__ void downsamplekernel(float3* src, float3* dst, int64_t width, int64_t height){ //threads represents output pixels
-    int64_t x = threadIdx.x + blockIdx.x*blockDim.x; // < width >> 1 +1
-    int64_t y = threadIdx.y + blockIdx.y*blockDim.y; // < height >> 1 +1
+void downsample(TVec3<f32>* src, TVec3<f32>* dst, int64_t width, int64_t height, sycl::queue& q) {
+        int64_t newh = (height - 1) / 2 + 1;
+        int64_t neww = (width - 1) / 2 + 1;
 
-    int64_t newh = (height-1)/2 + 1;
-    int64_t neww = (width-1)/2 + 1;
+        int64_t th_x = sycl::min((int64_t)16, neww);
+        int64_t th_y = sycl::min((int64_t)16, newh);
+        int64_t bl_x = (neww - 1) / th_x + 1;
+        int64_t bl_y = (newh - 1) / th_y + 1;
 
-    if (x >= neww || y >= newh) return;
+        sycl::range<2> local(th_y, th_x);                     // threads per work-group
+        sycl::range<2> global(bl_y * th_y, bl_x * th_x);      // total threads
 
-    dst[y * neww + x] = src[min((int)(2*y), (int)(height-1)) * width + min((int)(2*x), (int)(width-1))];
-    dst[y * neww + x] += src[min((int)(2*y + 1), (int)(height-1)) * width + min((int)(2*x), (int)(width-1))];
-    dst[y * neww + x] += src[min((int)(2*y), (int)(height-1)) * width + min((int)(2*x+1), (int)(width-1))];
-    dst[y * neww + x] += src[min((int)(2*y + 1), (int)(height-1)) * width + min((int)(2*x+1), (int)(width-1))];
-    dst[y * neww + x] *= 0.25f;
-    //printf("got %f, %f, %f from %f, %f, %f ; %f, %f, %f ; %f, %f, %f ; %f, %f, %f\n", dst[y * neww + x].x, dst[y * neww + x].y, dst[y * neww + x].z, src[min((int)(2*y), (int)(newh-1)) * neww + 2*x].x, src[min((int)(2*y), (int)(newh-1)) * neww + 2*x].y, src[min((int)(2*y), (int)(newh-1)) * neww + 2*x].z, src[min((int)(2*y + 1), (int)(newh-1)) * neww + 2*x].x, src[min((int)(2*y + 1), (int)(newh-1)) * neww + 2*x].y, src[min((int)(2*y + 1), (int)(newh-1)) * neww + 2*x].z, src[min((int)(2*y), (int)(newh-1)) * neww + 2*x + 1].x, src[min((int)(2*y), (int)(newh-1)) * neww + 2*x + 1].y, src[min((int)(2*y), (int)(newh-1)) * neww + 2*x + 1].z, src[min((int)(2*y + 1), (int)(newh-1)) * neww + 2*x + 1].x, src[min((int)(2*y + 1), (int)(newh-1)) * neww + 2*x + 1].y, src[min((int)(2*y + 1), (int)(newh-1)) * neww + 2*x + 1].z);
-}
+        q.submit([&](sycl::handler& h) {
+            h.parallel_for(
+                sycl::nd_range<2>(global, local),
+                [=](sycl::nd_item<2> item) {
+                    int64_t y = item.get_global_id(0);
+                    int64_t x = item.get_global_id(1);
 
-void inline downsample(float3* src, float3* dst, int64_t width, int64_t height, hipStream_t stream){
-    int64_t newh = (height-1)/2 + 1;
-    int64_t neww = (width-1)/2 + 1;
+                    if (x >= neww || y >= newh) return;
 
-    int64_t th_x = std::min((int64_t)16, neww);
-    int64_t th_y = std::min((int64_t)16, newh);
-    int64_t bl_x = (neww-1)/th_x + 1;
-    int64_t bl_y = (newh-1)/th_y + 1;
-    downsamplekernel<<<dim3(bl_x, bl_y), dim3(th_x, th_y), 0, stream>>>(src, dst, width, height);
-    GPU_CHECK(hipGetLastError());
-}
+                    const int64_t idx = y * neww + x;
+                    dst[idx] =
+                        src[sycl::min(2 * y, height - 1) * width + sycl::min(2 * x, width - 1)];
+                    dst[idx] +=
+                        src[sycl::min(2 * y + 1, height - 1) * width + sycl::min(2 * x, width - 1)];
+                    dst[idx] +=
+                        src[sycl::min(2 * y, height - 1) * width + sycl::min(2 * x + 1, width - 1)];
+                    dst[idx] +=
+                        src[sycl::min(2 * y + 1, height - 1) * width + sycl::min(2 * x + 1, width - 1)];
+
+                    dst[idx] *= 0.25f;
+                });
+        });
+    }
 
 }

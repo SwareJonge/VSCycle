@@ -79,4 +79,8 @@ public:
     }
 };
 
+#define VSHIP_THROW(err_type) \
+    do { throw VshipError(err_type, __FILE__, __LINE__); } while (0)
+
+
 #endif

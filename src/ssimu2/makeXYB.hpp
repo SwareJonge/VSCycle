@@ -1,112 +1,109 @@
 #ifndef MAKEXYBHPP
 #define MAKEXYBHPP
 
-__device__ inline void opsin_absorbance(float3& a){
-    float3 out;
-    const float opsin_bias = 0.0037930734f;
-    out.x = fmaf(0.30f, a.x,
-    fmaf(0.622f, a.y,
-    fmaf(0.078f, a.z,
+inline void opsin_absorbance(TVec3<f32>& a){
+    const f32 x = a.x();
+    const f32 y = a.y();
+    const f32 z = a.z();
+    const f32 opsin_bias = 0.0037930734f;
+
+    a.x() = sycl::fma(0.30f, x,
+    sycl::fma(0.622f, y,
+    sycl::fma(0.078f, z,
     opsin_bias)));
 
-    out.y = fmaf(0.23f, a.x,
-    fmaf(0.692f, a.y,
-    fmaf(0.078f, a.z,
+    a.y() = sycl::fma(0.23f, x,
+    sycl::fma(0.692f, y,
+    sycl::fma(0.078f, z,
     opsin_bias)));
 
-    out.z = fmaf(0.24342269f, a.x,
-    fmaf(0.20476745f, a.y,
-    fmaf(0.55180986f, a.z,
+    a.z() = sycl::fma(0.24342269f, x,
+    sycl::fma(0.20476745f, y,
+    sycl::fma(0.55180986f, z,
     opsin_bias)));
-
-    a = out;
 }
 
-__device__ inline void mixed_to_xyb(float3& a){
-    a.x = 0.5f * (a.x - a.y);
-    a.y = a.x + a.y;
+inline void mixed_to_xyb(TVec3<f32>& a){
+    a.y() += (a.x() = 0.5f * (a.x() - a.y()));
 }
 
-__device__ inline void linear_rgb_to_xyb(float3& a){
+inline void linear_rgb_to_xyb(TVec3<f32>& a){
     const float abs_bias = -0.1559542025327239f;
     opsin_absorbance(a);
-    //printf("from %f to %f\n", a.x, cbrtf(a.x*((int)(a.x >= 0))));
-    a.x = cbrtf(a.x * ((int)(a.x >= 0))) + abs_bias;
-    a.y = cbrtf(a.y * ((int)(a.y >= 0))) + abs_bias;
-    a.z = cbrtf(a.z * ((int)(a.z >= 0))) + abs_bias;
+    //printf("from %f to %f\n", a.x, cbrtf(a.x*((int)(a.x() >= 0))));
+    a.x() = sycl::cbrt(a.x() * ((int)(a.x() >= 0))) + abs_bias;
+    a.y() = sycl::cbrt(a.y() * ((int)(a.y() >= 0))) + abs_bias;
+    a.z() = sycl::cbrt(a.z() * ((int)(a.z() >= 0))) + abs_bias;
     //printf("got %f, %f, %f\n", a.x, a.y, a.z);
     mixed_to_xyb(a);
 }
 
-__device__ inline void make_positive_xyb(float3& a) {
-    a.z = (a.z - a.y) + 0.55;
-    a.x = a.x * 14.0f + 0.42;  
-    a.y += 0.01;
+inline void make_positive_xyb(TVec3<f32>& a) {
+    a.z() = (a.z() - a.y()) + 0.55f;
+    a.y() += 0.01f;
+    a.x() = a.x() * 14.0f + 0.42f;
 }
 
-__device__ inline void rgb_to_positive_xyb_d(float3& a){
+inline void rgb_to_positive_xyb_d(TVec3<f32>& a){
     linear_rgb_to_xyb(a);
     make_positive_xyb(a);
 }
 
-__device__ inline void rgb_to_linrgbfunc(float& a){
+inline void rgb_to_linrgbfunc(f32& a) {
     if (a < 0.f){
         if (a < -0.04045f){
-            a = -powf(((-a+0.055f)*(1.0f/1.055f)), 2.4f);
+            a = -sycl::pow(((-a+0.055f)*(1.0f/1.055f)), 2.4f);
         } else {
             a *= 1.0f/12.92f;
         }
+    } else if (a > 0.04045f){
+        a = sycl::pow(((a+0.055f)*(1.0f/1.055f)), 2.4f);
     } else {
-        if (a > 0.04045f){
-            a = powf(((a+0.055f)*(1.0f/1.055f)), 2.4f);
-        } else {
-            a *= 1.0f/12.92f;
-        }
+        a *= 1.0f/12.92f;
     }
 }
 
-__device__ inline void rgb_to_linrgb(float3& a){
-    rgb_to_linrgbfunc(a.x);
-    rgb_to_linrgbfunc(a.y);
-    rgb_to_linrgbfunc(a.z);
+inline void rgb_to_linrgb(TVec3<f32>& a){
+    rgb_to_linrgbfunc(a.x());
+    rgb_to_linrgbfunc(a.y());
+    rgb_to_linrgbfunc(a.z());
 }
 
-__launch_bounds__(256)
-__global__ void rgb_to_positive_xyb_Kernel(float3* array, int64_t width){
-    int64_t x = threadIdx.x + blockIdx.x*blockDim.x;
-    if (x >= width) return;
-    //float3 old = array[x];
-    //rgb_to_linrgb(array[x]); we need to do it before rescale
-    //float3 old = array[x];
-    rgb_to_positive_xyb_d(array[x]);
-    //if (x == 10000) printf("from %f, %f, %f to %f, %f, %f\n", old.x, old.y, old.z, array[x].x, array[x].y, array[x].z);
+void rgb_to_positive_xyb(TVec3<f32>* array, int64_t width, sycl::queue& q) {
+    int64_t th_x = std::min<int64_t>(256, width);
+    int64_t bl_x = (width - 1) / th_x + 1;
+
+    sycl::range<1> local(th_x);          // threads per work-group
+    sycl::range<1> global(bl_x * th_x);  // total threads
+
+    q.submit([&](sycl::handler& h) {
+        h.parallel_for(
+            sycl::nd_range<1>(global, local),
+            [=](sycl::nd_item<1> item) {
+                int64_t x = item.get_global_id(0);
+                if (x >= width) return;
+
+                rgb_to_positive_xyb_d(array[x]);
+            });
+    });
 }
 
-__host__ inline void rgb_to_positive_xyb(float3* array, int64_t width, hipStream_t stream){
-    int64_t th_x = std::min((int64_t)256, width);
-    int64_t bl_x = (width-1)/th_x + 1;
-    rgb_to_positive_xyb_Kernel<<<dim3(bl_x), dim3(th_x), 0, stream>>>(array, width);
-    GPU_CHECK(hipGetLastError());
+inline void rgb_to_linear(TVec3<f32>* array, int64_t width, sycl::queue &stream){
+    int64_t th_x = std::min<int64_t>(256, width);
+    int64_t bl_x = (width - 1) / th_x + 1;
+
+    sycl::range<1> local(th_x);          // threads per work-group
+    sycl::range<1> global(bl_x * th_x);  // total threads
+
+    stream.submit([&](sycl::handler& h) {
+        h.parallel_for(
+            sycl::nd_range<1>(global, local),
+            [=](sycl::nd_item<1> item) {
+                int64_t x = item.get_global_id(0);
+                if (x >= width) return;
+
+                rgb_to_linrgb(array[x]);
+            });
+    });
 }
-
-__launch_bounds__(256)
-__global__ void rgb_to_linear_Kernel(float3* array, int64_t width){
-    int64_t x = threadIdx.x + blockIdx.x*blockDim.x;
-    if (x >= width) return;
-    //float3 old = array[x];
-    rgb_to_linrgb(array[x]);
-    //float3 old = array[x];
-    //rgb_to_positive_xyb_d(array[x]); we need to make it xyb after downscale
-    //if (x == 10000) printf("from %f, %f, %f to %f, %f, %f\n", old.x, old.y, old.z, array[x].x, array[x].y, array[x].z);
-}
-
-__host__ inline void rgb_to_linear(float3* array, int64_t width, hipStream_t stream){
-    int64_t th_x = std::min((int64_t)256, width);
-    int64_t bl_x = (width-1)/th_x + 1;
-    rgb_to_linear_Kernel<<<dim3(bl_x), dim3(th_x), 0, stream>>>(array, width);
-    GPU_CHECK(hipGetLastError());
-}
-
-
-
 #endif

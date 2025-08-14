@@ -27,55 +27,71 @@
 namespace helper{
 
     int checkGpuCount(){
-        int count;
-        if (hipGetDeviceCount(&count) != 0){
-            throw VshipError(DeviceCountError, __FILE__, __LINE__);
-        };
-        if (count == 0){
-            throw VshipError(NoDeviceDetected, __FILE__, __LINE__);
+        auto devices = sycl::device::get_devices(sycl::info::device_type::gpu);
+        int count = static_cast<int>(devices.size());
+        if (count == 0) {
+            VSHIP_THROW(NoDeviceDetected);
         }
         return count;
     }
 
-    __global__ void kernelTest(int* inputtest){
-        inputtest[0] = 4320984;
+    void kernelTest(sycl::queue& q, int* inputtest) {
+        q.submit([&](sycl::handler &cgh) {
+            cgh.parallel_for(sycl::range<1>{1}, [=](sycl::id<1> idx) {
+                inputtest[0] = 4320984;
+            });
+        });
     }
 
-    bool gpuKernelCheck(){
+    bool gpuKernelCheck(sycl::queue& q) {
         int inputtest = 0;
-        int* inputtest_d;
-        hipMalloc(&inputtest_d, sizeof(int)*1);
-        hipMemset(inputtest_d, 0, sizeof(int)*1);
-        kernelTest<<<dim3(1), dim3(1), 0, 0>>>(inputtest_d);
-        hipMemcpyDtoH(&inputtest, inputtest_d, sizeof(int));
-        hipFree(inputtest_d);
-        return (inputtest == 4320984);
+
+        // Allocate USM device memory
+        int* inputtest_d = sycl::malloc_device<int>(1, q);
+        if (!inputtest_d) {
+            std::cerr << "Device memory allocation failed\n";
+            return false;
+        }
+
+        // Initialize to 0
+        q.memset(inputtest_d, 0, sizeof(int)).wait();
+
+        // Submit kernel
+        q.submit([&](sycl::handler &cgh) {
+            cgh.parallel_for(sycl::range<1>{1}, [=](sycl::id<1> idx) {
+                inputtest_d[0] = 4320984;  // write the magic number
+            });
+        }).wait();  // Must wait so kernel finishes before reading
+
+        // Copy back to host
+        q.memcpy(&inputtest, inputtest_d, sizeof(int)).wait();
+
+        sycl::free(inputtest_d, q);
+
+        return inputtest == 4320984;
     }
 
     void gpuFullCheck(int gpuid = 0){
+        auto devices = sycl::device::get_devices(sycl::info::device_type::gpu);
         int count = checkGpuCount();
 
         if (count <= gpuid || gpuid < 0){
-            throw VshipError(BadDeviceArgument, __FILE__, __LINE__);
+            VSHIP_THROW(BadDeviceArgument);
         }
-        hipSetDevice(gpuid);
-        if (!gpuKernelCheck()){
-            throw VshipError(BadDeviceCode, __FILE__, __LINE__);
+        sycl::queue q(devices[gpuid]);
+        if (!gpuKernelCheck(q)){
+            VSHIP_THROW(BadDeviceCode);
         }
     }
 
-    std::string listGPU(){
+    std::string listGPU() {
         std::stringstream ss;
-        hipDeviceProp_t devattr;
-        int device;
-        int count = checkGpuCount();
+        auto devices = sycl::device::get_devices(sycl::info::device_type::gpu);
 
-        for (int i = 0; i < count; i++){
-            hipSetDevice(i);
-            hipGetDevice(&device);
-            hipGetDeviceProperties(&devattr, device);
-            ss << "GPU " << i << ": " << devattr.name << std::endl;
+        for (size_t i = 0; i < devices.size(); i++) {
+            ss << "GPU " << i << ": " << devices[i].get_info<sycl::info::device::name>() << std::endl;
         }
+
         return ss.str();
     }
 }

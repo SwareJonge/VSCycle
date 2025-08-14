@@ -1,5 +1,4 @@
 #pragma once
-
 #include "../util/preprocessor.hpp"
 #include "../util/VshipExceptions.hpp"
 #include "../util/gpuhelper.hpp"
@@ -13,22 +12,38 @@
 namespace ssimu2{
 
 template <InputMemType T>
-__launch_bounds__(256)
-__global__ void memoryorganizer_kernel(float3* out, const uint8_t *srcp0, const uint8_t *srcp1, const uint8_t *srcp2, int64_t stride, int64_t width, int64_t height){
-    int64_t x = threadIdx.x + blockIdx.x*blockDim.x;
-    if (x >= width*height) return;
-    int j = x%width;
-    int i = x/width;
-    out[i*width + j].x = convertPointer<T>(srcp0, i, j, stride);
-    out[i*width + j].y = convertPointer<T>(srcp1, i, j, stride);
-    out[i*width + j].z = convertPointer<T>(srcp2, i, j, stride);
-}
+static void memoryorganizer(TVec3<f32>* out,
+                    const uint8_t* srcp0,
+                    const uint8_t* srcp1,
+                    const uint8_t* srcp2,
+                    int64_t stride,
+                    int64_t width,
+                    int64_t height,
+                    sycl::queue& q)
+{
+    const int64_t total = width * height;
 
-template <InputMemType T>
-void memoryorganizer(float3* out, const uint8_t *srcp0, const uint8_t *srcp1, const uint8_t *srcp2, int64_t stride, int64_t width, int64_t height, hipStream_t stream){
-    int th_x = std::min((int64_t)256, width*height);
-    int bl_x = (width*height-1)/th_x + 1;
-    memoryorganizer_kernel<T><<<dim3(bl_x), dim3(th_x), 0, stream>>>(out, srcp0, srcp1, srcp2, stride, width, height);
+    // Keep your 256-thread work-group size
+    const size_t local_size = std::min<int64_t>(256, total);
+    const size_t global_size = ((total + local_size - 1) / local_size) * local_size;
+
+    q.submit([&](sycl::handler& h) {
+        h.parallel_for(
+            sycl::nd_range<1>(sycl::range<1>(global_size),
+                            sycl::range<1>(local_size)),
+            [=](sycl::nd_item<1> it) {
+                const int64_t x = it.get_global_id(0);
+                if (x >= total) return;
+
+                const int j = x % width;
+                const int i = x / width;
+
+                out[i * width + j].x() = convertPointer<T>(srcp0, i, j, stride);
+                out[i * width + j].y() = convertPointer<T>(srcp1, i, j, stride);
+                out[i * width + j].z() = convertPointer<T>(srcp2, i, j, stride);
+            }
+        );
+    });
 }
 
 int64_t getTotalScaleSize(int64_t width, int64_t height){
@@ -42,151 +57,168 @@ int64_t getTotalScaleSize(int64_t width, int64_t height){
 }
 
 //expects packed linear RGB input. Beware that each src1_d, src2_d and temp_d must be of size "totalscalesize" even if the actual image is contained in a width*height format
-double ssimu2GPUProcess(float3* src1_d, float3* src2_d, float3* temp_d, float3* pinned, int64_t width, int64_t height, GaussianHandle& gaussianhandle, int64_t maxshared, hipStream_t stream){
+// src_1_d src_2_d and temp_d all are on the GPU
+double ssimu2GPUProcess(TVec3<f32>* src1_d, TVec3<f32>* src2_d, TVec3<f32>* temp_d, TVec3<f32>* pinned, int64_t width, int64_t height, GaussianHandle& gaussianhandle, int64_t maxshared, sycl::queue& q){
     const int64_t totalscalesize = getTotalScaleSize(width, height);
-
     //step 1 : fill the downsample part
     int64_t nw = width;
     int64_t nh = height;
     int64_t index = 0;
     for (int scale = 1; scale <= 5; scale++){
-        downsample(src1_d+index, src1_d+index+nw*nh, nw, nh, stream);
-        index += nw*nh;
-        nw = (nw -1)/2 + 1;
-        nh = (nh - 1)/2 + 1;
-    }
-    nw = width;
-    nh = height;
-    index = 0;
-    for (int scale = 1; scale <= 5; scale++){
-        downsample(src2_d+index, src2_d+index+nw*nh, nw, nh, stream);
+        downsample(src1_d+index, src1_d+index+nw*nh, nw, nh, q);
+        downsample(src2_d+index, src2_d+index+nw*nh, nw, nh, q);
         index += nw*nh;
         nw = (nw -1)/2 + 1;
         nh = (nh - 1)/2 + 1;
     }
 
     //step 2 : positive XYB transition
-    rgb_to_positive_xyb(src1_d, totalscalesize, stream);
-    rgb_to_positive_xyb(src2_d, totalscalesize, stream);
+    rgb_to_positive_xyb(src1_d, totalscalesize, q);
+    rgb_to_positive_xyb(src2_d, totalscalesize, q);
 
     //step 4 : ssim map
     
     //step 5 : edge diff map    
-    std::vector<float3> allscore_res;
-    try{
-        allscore_res = allscore_map(src1_d, src2_d, temp_d, pinned, width, height, maxshared, gaussianhandle, stream);
-    } catch (const VshipError& e){
-        throw e;
-    }
+    std::vector<TVec3<f32>> allscore_res = allscore_map(src1_d, src2_d, temp_d, pinned, width, height, maxshared, gaussianhandle, q);
+    
 
     //step 6 : format the vector
-    std::vector<float> measure_vec(108);
+    std::vector<f32> measure_vec(108);
 
-    for (int plane = 0; plane < 3; plane++){
-        for (int scale = 0; scale < 6; scale++){
-            for (int n = 0; n < 2; n++){
-                for (int i = 0; i < 3; i++){
-                    if (plane == 0) measure_vec[plane*6*2*3 + scale*2*3 + n*3 + i] = allscore_res[scale*2*3 + i*2 + n].x;
-                    if (plane == 1) measure_vec[plane*6*2*3 + scale*2*3 + n*3 + i] = allscore_res[scale*2*3 + i*2 + n].y;
-                    if (plane == 2) measure_vec[plane*6*2*3 + scale*2*3 + n*3 + i] = allscore_res[scale*2*3 + i*2 + n].z;
+    for (int plane = 0; plane < 3; plane++) {
+        for (int scale = 0; scale < 6; scale++) {
+            for (int n = 0; n < 2; n++) {
+                for (int i = 0; i < 3; i++) {
+                    if (plane == 0) measure_vec[plane*6*2*3 + scale*2*3 + n*3 + i] = allscore_res[scale*2*3 + i*2 + n].x();
+                    if (plane == 1) measure_vec[plane*6*2*3 + scale*2*3 + n*3 + i] = allscore_res[scale*2*3 + i*2 + n].y();
+                    if (plane == 2) measure_vec[plane*6*2*3 + scale*2*3 + n*3 + i] = allscore_res[scale*2*3 + i*2 + n].z();
                 }
             }
         }
     }
 
     //step 7 : enjoy !
-    const float ssim = final_score(measure_vec);
+    f32 res = final_score(measure_vec);
 
     //hipEventRecord(event_d, stream); //place an event in the stream at the end of all our operations
     //hipEventSynchronize(event_d); //when the event is complete, we know our gpu result is ready!
 
-    return ssim;
+    return res;
 }
 
 template <InputMemType T>
-double ssimu2process(const uint8_t *srcp1[3], const uint8_t *srcp2[3], float3* pinned, int64_t stride, int64_t width, int64_t height, GaussianHandle& gaussianhandle, int64_t maxshared, hipStream_t stream){
-
+double ssimu2process(const uint8_t *srcp1[3], const uint8_t *srcp2[3], TVec3<f32>* pinned, int64_t stride, int64_t width, int64_t height, GaussianHandle& gaussianhandle, int64_t maxshared, sycl::queue& stream){
+    // bytes needed for the three-plane staging area vs. a float3 buffer of totalscalesize
     const int64_t totalscalesize = getTotalScaleSize(width, height);
+    const size_t plane_bytes = static_cast<size_t>(stride) * static_cast<size_t>(height);
+    const size_t three_planes = plane_bytes * 3;
+    const size_t float3_block = sizeof(TVec3<f32>) * static_cast<size_t>(totalscalesize);
 
-    //big memory allocation, we will try it multiple time if failed to save when too much threads are used
-    hipError_t erralloc;
+    // single big block: [ src1_d | src2_d | temp_scratch ]
+    const size_t total_bytes =
+        2 * float3_block + sycl::max(float3_block, three_planes);
 
-    float3* mem_d;
-    erralloc = hipMallocAsync(&mem_d, sizeof(float3)*totalscalesize*(2) + std::max((int64_t)sizeof(float3)*totalscalesize, stride*height*3), stream); //2 base image and 1 reduction+copy buffer
-    if (erralloc != hipSuccess){
-        throw VshipError(OutOfVRAM, __FILE__, __LINE__);
+    // Allocate device USM (throws on OOM → convert to your error)
+    unsigned char* mem = nullptr;
+    try {
+        mem = sycl::malloc_device<unsigned char>(total_bytes, stream);
+        if (!mem) throw std::bad_alloc{};
+    } catch (...) {
+        VSHIP_THROW(OutOfVRAM);
     }
 
-    float3* src1_d = mem_d; //length totalscalesize
-    float3* src2_d = mem_d + totalscalesize;
+    auto* src1_d = reinterpret_cast<TVec3<f32>*>(mem);
+    auto* src2_d = reinterpret_cast<TVec3<f32>*>(mem + float3_block);
+    unsigned char* temp_bytes = mem + 2 * float3_block;              // scratch base (bytes)
+    void* temp_scratch_for_gpu = static_cast<void*>(temp_bytes);     // pass-through scratch
 
-    float3* temp_d = mem_d + 2*totalscalesize;
+    // Stage the three host planes for src1 into device scratch
+    {
+        uint8_t* p0 = temp_bytes;
+        uint8_t* p1 = temp_bytes + 1 * plane_bytes;
+        uint8_t* p2 = temp_bytes + 2 * plane_bytes;
 
-    uint8_t *memory_placeholder[3] = {(uint8_t*)temp_d, (uint8_t*)temp_d+stride*height, (uint8_t*)temp_d+2*stride*height};
-    GPU_CHECK(hipMemcpyHtoDAsync(memory_placeholder[0], (void*)srcp1[0], stride * height, stream));
-    GPU_CHECK(hipMemcpyHtoDAsync(memory_placeholder[1], (void*)srcp1[1], stride * height, stream));
-    GPU_CHECK(hipMemcpyHtoDAsync(memory_placeholder[2], (void*)srcp1[2], stride * height, stream));
-    memoryorganizer<T>(src1_d, memory_placeholder[0], memory_placeholder[1], memory_placeholder[2], stride, width, height, stream);
+        stream.memcpy(p0, srcp1[0], plane_bytes);
+        stream.memcpy(p1, srcp1[1], plane_bytes);
+        stream.memcpy(p2, srcp1[2], plane_bytes);
+        
+        // Convert staged planes → interleaved/float3 RGB into src1_d
+        memoryorganizer<T>(src1_d, p0, p1, p2, stride, width, height, stream);
+    }
 
-    GPU_CHECK(hipMemcpyHtoDAsync(memory_placeholder[0], (void*)srcp2[0], stride * height, stream));
-    GPU_CHECK(hipMemcpyHtoDAsync(memory_placeholder[1], (void*)srcp2[1], stride * height, stream));
-    GPU_CHECK(hipMemcpyHtoDAsync(memory_placeholder[2], (void*)srcp2[2], stride * height, stream));
-    memoryorganizer<T>(src2_d, memory_placeholder[0], memory_placeholder[1], memory_placeholder[2], stride, width, height, stream);
+    // Stage the three host planes for src2 into the same device scratch (reused)
+    {
+        uint8_t* p0 = temp_bytes + 0 * plane_bytes;
+        uint8_t* p1 = temp_bytes + 1 * plane_bytes;
+        uint8_t* p2 = temp_bytes + 2 * plane_bytes;
 
+        stream.memcpy(p0, srcp2[0], plane_bytes);
+        stream.memcpy(p1, srcp2[1], plane_bytes);
+        stream.memcpy(p2, srcp2[2], plane_bytes);
+
+        memoryorganizer<T>(src2_d, p0, p1, p2, stride, width, height, stream);
+    }
+
+    // Colorspace
     rgb_to_linear(src1_d, totalscalesize, stream);
     rgb_to_linear(src2_d, totalscalesize, stream);
 
     double res;
     try {
-        res = ssimu2GPUProcess(src1_d, src2_d, temp_d, pinned, width, height, gaussianhandle, maxshared, stream);
+        res = ssimu2GPUProcess(src1_d, src2_d, (TVec3<f32>*)(temp_bytes), pinned, width, height, gaussianhandle, maxshared, stream);
     } catch (const VshipError& e){
-        hipFree(mem_d);
+        sycl::free(temp_bytes, stream);
         throw e;
     }
 
-    hipFreeAsync(mem_d, stream);
-
+    // Make sure all enqueued ops that might touch 'mem' are done before free
+    stream.wait_and_throw();
+    sycl::free(mem, stream);
+    
     return res;
 }
 
 class SSIMU2ComputingImplementation{
-    float3* pinned;
-    GaussianHandle gaussianhandle;
-    int64_t width;
-    int64_t height;
-    int maxshared;
-    hipStream_t stream;
 public:
-    void init(int64_t width, int64_t height){
-        this->width = width;
-        this->height = height;
+    SSIMU2ComputingImplementation() : stream(sycl::queue{sycl::gpu_selector_v, sycl::property::queue::in_order{}}) {
+    }
 
-        gaussianhandle.init();
-        hipStreamCreate(&stream);
+    void init(int64_t w, int64_t h) {
+        width = w;
+        height = h;
 
-        int device;
-        hipDeviceProp_t devattr;
-        hipGetDevice(&device);
-        hipGetDeviceProperties(&devattr, device);
+        gaussianhandle.init(stream);
 
-        maxshared = devattr.sharedMemPerBlock;
+        // Query “shared memory per block” equivalent
+        auto dev = stream.get_device();
+        maxshared = dev.get_info<sycl::info::device::local_mem_size>();
 
+        // Allocate pinned host memory (USM host). Many backends pin this.
         const int64_t pinnedsize = allocsizeScore(width, height, maxshared);
-        hipError_t erralloc = hipHostMalloc(&pinned, sizeof(float3)*pinnedsize);
-        if (erralloc != hipSuccess){
-            gaussianhandle.destroy();
-            throw VshipError(OutOfRAM, __FILE__, __LINE__);
+        pinned = sycl::malloc_host<TVec3<f32>>(static_cast<size_t>(pinnedsize), stream);
+        if (!pinned) {
+            gaussianhandle.destroy(stream);
+            VSHIP_THROW(OutOfRAM);
         }
     }
-    void destroy(){
-        gaussianhandle.destroy();
-        hipStreamDestroy(stream);
-        hipHostFree(pinned);
+
+    void destroy() {
+        gaussianhandle.destroy(stream);
+        sycl::free(pinned, stream);
     }
+
     template <InputMemType T>
     double run(const uint8_t* srcp1[3], const uint8_t* srcp2[3], int64_t stride){
         return ssimu2process<T>(srcp1, srcp2, pinned, stride, width, height, gaussianhandle, maxshared, stream);
     }
+
+private:
+    sycl::queue stream;
+    GaussianHandle gaussianhandle;
+    TVec3<f32>* pinned;
+    int64_t width;
+    int64_t height;
+    int maxshared;
 };
 
 }

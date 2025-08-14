@@ -1,7 +1,8 @@
 #pragma once
 
-#include "../util/torgbs.hpp"
+#include "torgbs.hpp"
 #include "main.hpp"
+#include "../util/gpuhelper.hpp"
 
 namespace ssimu2{
 
@@ -9,8 +10,8 @@ typedef struct Ssimulacra2Data{
     VSNode *reference;
     VSNode *distorted;
     SSIMU2ComputingImplementation* ssimu2Streams;
-    int streamnum = 0;
     threadSet<int>* streamSet;
+    int streamnum = 0;
 } Ssimulacra2Data;
 
 static const VSFrame *VS_CC ssimulacra2GetFrame(int n, int activationReason, void *instanceData, void **frameData, VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi) {
@@ -141,10 +142,11 @@ static void VS_CC ssimulacra2Create(const VSMap *in, VSMap *out, void *userData,
     d.streamnum = std::max(d.streamnum, 1); //at least one stream to not just wait indefinitely
 
     try{
-        d.ssimu2Streams = (SSIMU2ComputingImplementation*)malloc(sizeof(SSIMU2ComputingImplementation)*d.streamnum);
+        d.ssimu2Streams = new SSIMU2ComputingImplementation[d.streamnum];
         for (int i = 0; i < d.streamnum; i++){
             d.ssimu2Streams[i].init(viref->width, viref->height);
         }
+        
     } catch (const VshipError& e){
         vsapi->mapSetError(out, e.getErrorMessage().c_str());
         return;
@@ -161,7 +163,7 @@ static void VS_CC ssimulacra2Create(const VSMap *in, VSMap *out, void *userData,
 
     VSFilterDependency deps[] = {{d.reference, rpStrictSpatial}, {d.distorted, rpStrictSpatial}};
 
-    vsapi->createVideoFilter(out, "vship", viref, ssimulacra2GetFrame, ssimulacra2Free, fmParallel, deps, 2, data, core);
+    vsapi->createVideoFilter(out, "vscycle", viref, ssimulacra2GetFrame, ssimulacra2Free, fmParallel, deps, 2, data, core);
 }
 
 }
