@@ -180,10 +180,9 @@ double ssimu2process(const uint8_t *srcp1[3], const uint8_t *srcp2[3], TVec3<f32
 
 class SSIMU2ComputingImplementation{
 public:
-    SSIMU2ComputingImplementation() : stream(sycl::queue{sycl::gpu_selector_v, sycl::property::queue::in_order{}}) {
-    }
-
-    void init(int64_t w, int64_t h) {
+    SSIMU2ComputingImplementation(int64_t w, int64_t h, int device_id) 
+    : stream(sycl::device::get_devices(sycl::info::device_type::gpu)[device_id], sycl::property::queue::in_order{}) 
+    {
         width = w;
         height = h;
 
@@ -195,7 +194,7 @@ public:
 
         // Allocate pinned host memory (USM host). Many backends pin this.
         const int64_t pinnedsize = allocsizeScore(width, height, maxshared);
-        pinned = sycl::malloc_host<TVec3<f32>>(static_cast<size_t>(pinnedsize), stream);
+        pinned = (TVec3<f32>*)sycl::malloc_host<uint8_t>(static_cast<size_t>(pinnedsize), stream);
         if (!pinned) {
             gaussianhandle.destroy(stream);
             VSHIP_THROW(OutOfRAM);

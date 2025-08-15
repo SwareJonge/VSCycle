@@ -142,9 +142,10 @@ static void VS_CC ssimulacra2Create(const VSMap *in, VSMap *out, void *userData,
     d.streamnum = std::max(d.streamnum, 1); //at least one stream to not just wait indefinitely
 
     try{
-        d.ssimu2Streams = new SSIMU2ComputingImplementation[d.streamnum];
+        auto devices = sycl::device::get_devices(sycl::info::device_type::gpu);
+        d.ssimu2Streams = (SSIMU2ComputingImplementation*)malloc(sizeof(SSIMU2ComputingImplementation)*d.streamnum);
         for (int i = 0; i < d.streamnum; i++){
-            d.ssimu2Streams[i].init(viref->width, viref->height);
+            new(&d.ssimu2Streams[i]) SSIMU2ComputingImplementation(viref->width, viref->height, 0);
         }
         
     } catch (const VshipError& e){
