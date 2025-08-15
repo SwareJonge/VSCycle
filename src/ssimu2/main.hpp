@@ -12,7 +12,7 @@
 namespace ssimu2{
 
 template <InputMemType T>
-static void memoryorganizer(TVec3<f32>* out,
+static void memoryorganizer(sycl::float3* out,
                     const uint8_t* srcp0,
                     const uint8_t* srcp1,
                     const uint8_t* srcp2,
@@ -58,7 +58,7 @@ int64_t getTotalScaleSize(int64_t width, int64_t height){
 
 //expects packed linear RGB input. Beware that each src1_d, src2_d and temp_d must be of size "totalscalesize" even if the actual image is contained in a width*height format
 // src_1_d src_2_d and temp_d all are on the GPU
-double ssimu2GPUProcess(TVec3<f32>* src1_d, TVec3<f32>* src2_d, TVec3<f32>* temp_d, TVec3<f32>* pinned, int64_t width, int64_t height, GaussianHandle& gaussianhandle, int64_t maxshared, sycl::queue& q){
+double ssimu2GPUProcess(sycl::float3* src1_d, sycl::float3* src2_d, sycl::float3* temp_d, sycl::float3* pinned, int64_t width, int64_t height, GaussianHandle& gaussianhandle, int64_t maxshared, sycl::queue& q){
     const int64_t totalscalesize = getTotalScaleSize(width, height);
     //step 1 : fill the downsample part
     int64_t nw = width;
@@ -79,7 +79,7 @@ double ssimu2GPUProcess(TVec3<f32>* src1_d, TVec3<f32>* src2_d, TVec3<f32>* temp
     //step 4 : ssim map
     
     //step 5 : edge diff map    
-    std::vector<TVec3<f32>> allscore_res = allscore_map(src1_d, src2_d, temp_d, pinned, width, height, maxshared, gaussianhandle, q);
+    std::vector<sycl::float3> allscore_res = allscore_map(src1_d, src2_d, temp_d, pinned, width, height, maxshared, gaussianhandle, q);
     
 
     //step 6 : format the vector
@@ -107,12 +107,12 @@ double ssimu2GPUProcess(TVec3<f32>* src1_d, TVec3<f32>* src2_d, TVec3<f32>* temp
 }
 
 template <InputMemType T>
-double ssimu2process(const uint8_t *srcp1[3], const uint8_t *srcp2[3], TVec3<f32>* pinned, int64_t stride, int64_t width, int64_t height, GaussianHandle& gaussianhandle, int64_t maxshared, sycl::queue& stream){
+double ssimu2process(const uint8_t *srcp1[3], const uint8_t *srcp2[3], sycl::float3* pinned, int64_t stride, int64_t width, int64_t height, GaussianHandle& gaussianhandle, int64_t maxshared, sycl::queue& stream){
     // bytes needed for the three-plane staging area vs. a float3 buffer of totalscalesize
     const int64_t totalscalesize = getTotalScaleSize(width, height);
     const size_t plane_bytes = static_cast<size_t>(stride) * static_cast<size_t>(height);
     const size_t three_planes = plane_bytes * 3;
-    const size_t float3_block = sizeof(TVec3<f32>) * static_cast<size_t>(totalscalesize);
+    const size_t float3_block = sizeof(sycl::float3) * static_cast<size_t>(totalscalesize);
 
     // single big block: [ src1_d | src2_d | temp_scratch ]
     const size_t total_bytes =
@@ -127,8 +127,8 @@ double ssimu2process(const uint8_t *srcp1[3], const uint8_t *srcp2[3], TVec3<f32
         VSHIP_THROW(OutOfVRAM);
     }
 
-    auto* src1_d = reinterpret_cast<TVec3<f32>*>(mem);
-    auto* src2_d = reinterpret_cast<TVec3<f32>*>(mem + float3_block);
+    auto* src1_d = reinterpret_cast<sycl::float3*>(mem);
+    auto* src2_d = reinterpret_cast<sycl::float3*>(mem + float3_block);
     unsigned char* temp_bytes = mem + 2 * float3_block;              // scratch base (bytes)
     void* temp_scratch_for_gpu = static_cast<void*>(temp_bytes);     // pass-through scratch
 
@@ -165,7 +165,7 @@ double ssimu2process(const uint8_t *srcp1[3], const uint8_t *srcp2[3], TVec3<f32
 
     double res;
     try {
-        res = ssimu2GPUProcess(src1_d, src2_d, (TVec3<f32>*)(temp_bytes), pinned, width, height, gaussianhandle, maxshared, stream);
+        res = ssimu2GPUProcess(src1_d, src2_d, (sycl::float3*)(temp_bytes), pinned, width, height, gaussianhandle, maxshared, stream);
     } catch (const VshipError& e){
         sycl::free(temp_bytes, stream);
         throw e;
@@ -194,7 +194,7 @@ public:
 
         // Allocate pinned host memory (USM host). Many backends pin this.
         const int64_t pinnedsize = allocsizeScore(width, height, maxshared);
-        pinned = (TVec3<f32>*)sycl::malloc_host<uint8_t>(static_cast<size_t>(pinnedsize), stream);
+        pinned = sycl::malloc_host<sycl::float3>(static_cast<size_t>(pinnedsize), stream);
         if (!pinned) {
             gaussianhandle.destroy(stream);
             VSHIP_THROW(OutOfRAM);
@@ -214,7 +214,7 @@ public:
 private:
     sycl::queue stream;
     GaussianHandle gaussianhandle;
-    TVec3<f32>* pinned;
+    sycl::float3* pinned;
     int64_t width;
     int64_t height;
     int maxshared;

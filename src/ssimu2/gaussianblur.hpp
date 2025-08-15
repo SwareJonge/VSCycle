@@ -28,9 +28,9 @@ public:
     f32* gaussiankernel_integral_d;
 };
 
-inline void GaussianSmartSharedLoadProduct(sycl::local_accessor<TVec3<f32>, 1> tampon,
-                                           sycl::global_ptr<const TVec3<f32>> src1,
-                                           sycl::global_ptr<const TVec3<f32>> src2,
+inline void GaussianSmartSharedLoadProduct(sycl::local_accessor<sycl::float3, 1> tampon,
+                                           sycl::global_ptr<const sycl::float3> src1,
+                                           sycl::global_ptr<const sycl::float3> src2,
                                            int64_t x, int64_t y,
                                            int64_t width, int64_t height,
                                            sycl::nd_item<2> item) {
@@ -39,7 +39,7 @@ inline void GaussianSmartSharedLoadProduct(sycl::local_accessor<TVec3<f32>, 1> t
     const int tampon_base_x = x - thx - 8;
     const int tampon_base_y = y - thy - 8;
 
-    auto makeZero = [](){ return TVec3<f32>(0.0f); };
+    auto makeZero = [](){ return sycl::float3({0.0f}); };
 
     auto idx = [&](int yy, int xx) { return (yy)*32 + (xx); };
 
@@ -75,8 +75,8 @@ inline void GaussianSmartSharedLoadProduct(sycl::local_accessor<TVec3<f32>, 1> t
     item.barrier(sycl::access::fence_space::local_space);
 }
 
-inline void GaussianSmartSharedLoad(sycl::local_accessor<TVec3<f32>, 1> tampon,
-                                           sycl::global_ptr<const TVec3<f32>> src,
+inline void GaussianSmartSharedLoad(sycl::local_accessor<sycl::float3, 1> tampon,
+                                           sycl::global_ptr<const sycl::float3> src,
                                            int64_t x, int64_t y,
                                            int64_t width, int64_t height,
                                            sycl::nd_item<2> item) {
@@ -85,7 +85,7 @@ inline void GaussianSmartSharedLoad(sycl::local_accessor<TVec3<f32>, 1> tampon,
     const int tampon_base_x = x - thx - 8;
     const int tampon_base_y = y - thy - 8;
 
-    auto makeZero = [](){ return TVec3<f32>(0.0f); };
+    auto makeZero = [](){ return sycl::float3({0.0f, 0.0f, 0.0f}); };
 
     auto idx = [&](int yy, int xx) { return (yy)*32 + (xx); };
 
@@ -113,7 +113,7 @@ inline void GaussianSmartSharedLoad(sycl::local_accessor<TVec3<f32>, 1> tampon,
     item.barrier(sycl::access::fence_space::local_space);
 }
 
-inline void GaussianSmart_Device(sycl::local_accessor<TVec3<f32>, 1> tampon,
+inline void GaussianSmart_Device(sycl::local_accessor<sycl::float3, 1> tampon,
                                  int64_t x, int64_t y,
                                  int64_t width, int64_t height,
                                  sycl::global_ptr<const f32> gaussiankernel,
@@ -125,14 +125,14 @@ inline void GaussianSmart_Device(sycl::local_accessor<TVec3<f32>, 1> tampon,
     auto idx = [&](int yy, int xx) { return yy * 32 + xx; };
 
     // --- Horizontal Blur ---
-    TVec3<f32> out;
-    TVec3<f32> out2;
+    sycl::float3 out = tampon[idx(thy, thx)] * gaussiankernel[0];
+    sycl::float3 out2 = tampon[idx(thy + 16, thx)] * gaussiankernel[0];
 
     int beg = sycl::max<int64_t>(0, x - 8) - (x - 8);
     int end2 = sycl::min<int64_t>(width, x + 9) - (x - 8);
     f32 tot = gaussiankernel_integral[end2] - gaussiankernel_integral[beg];
 
-    for (int i = 0; i < 17; i++) {
+    for (int i = 1; i < 17; i++) {
         out += tampon[idx(thy, thx + i)] * gaussiankernel[i];
         out2 += tampon[idx(thy + 16, thx + i)] * gaussiankernel[i];
     }
@@ -143,12 +143,12 @@ inline void GaussianSmart_Device(sycl::local_accessor<TVec3<f32>, 1> tampon,
     item.barrier(sycl::access::fence_space::local_space);
 
     // --- Vertical Blur ---
-    out.zero();
+    out = tampon[idx(thy, thx + 8)] * gaussiankernel[0];
     beg = sycl::max<int64_t>(0, y - 8) - (y - 8);
     end2 = sycl::min<int64_t>(height, y + 9) - (y - 8);
     tot = gaussiankernel_integral[end2] - gaussiankernel_integral[beg];
 
-    for (int i = 0; i < 17; i++) {
+    for (int i = 1; i < 17; i++) {
         out += tampon[idx(thy + i, thx + 8)] * gaussiankernel[i];
     }
 

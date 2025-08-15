@@ -20,7 +20,7 @@ void inline transferLinearize(float& a);
 
 //apply linear on all 3 components
 template <AVColorTransferCharacteristic TRANSFER_TYPE>
-void inline transferLinearize(TVec3<f32> a){
+void inline transferLinearize(sycl::float3 a){
     transferLinearize<TRANSFER_TYPE>(a.x());
     transferLinearize<TRANSFER_TYPE>(a.y());
     transferLinearize<TRANSFER_TYPE>(a.z());

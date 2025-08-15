@@ -15,7 +15,7 @@ int64_t allocsizeScore(int64_t width, int64_t height, int maxshared){
         bl_x = bl_x*bl_y; //convert to linear
         th_x = 0;
         if (maxshared != 0) {
-            th_x = sycl::min<int64_t>(maxshared/(6*sizeof(TVec3<f32>)/32*32), (int64_t)sycl::min((int64_t)1024, bl_x));    
+            th_x = sycl::min<int64_t>(maxshared/(6*sizeof(sycl::float3)/32*32), (int64_t)sycl::min((int64_t)1024, bl_x));    
         }
         
         while (bl_x >= 256){
@@ -31,9 +31,9 @@ int64_t allocsizeScore(int64_t width, int64_t height, int maxshared){
 
 void allscore_map_Kernel(
     sycl::queue &q,
-    TVec3<f32>* dst,                         // device USM pointer where per-block outputs go
-    TVec3<f32>* im1,                         // device USM input 1 (base + index offset handled by caller)
-    TVec3<f32>* im2,                         // device USM input 2
+    sycl::float3* dst,                         // device USM pointer where per-block outputs go
+    sycl::float3* im1,                         // device USM input 1 (base + index offset handled by caller)
+    sycl::float3* im2,                         // device USM input 2
     int64_t width,
     int64_t height,
     float* gaussiankernel,                   // device USM pointer
@@ -58,7 +58,7 @@ void allscore_map_Kernel(
     q.submit([&](sycl::handler &h) {
         // one local buffer used both for the 6*threadnum reduction arrays
         // and (at the same time) as a 32x32 sharedmem for GaussianSmart* helpers.
-        sycl::local_accessor<TVec3<f32>, 1> sharedmem(sycl::range<1>(shared_elems), h);
+        sycl::local_accessor<sycl::float3, 1> sharedmem(sycl::range<1>(shared_elems), h);
 
         h.parallel_for(
             sycl::nd_range<2>(global_range, local_range),
@@ -76,68 +76,65 @@ void allscore_map_Kernel(
                 const int64_t threadnum_local = it.get_local_range(0) * it.get_local_range(1);
 
                 // local pointer
-                TVec3<f32>* smem = sharedmem.get_multi_ptr<sycl::access::decorated::no>().get();
+                sycl::float3* smem = sharedmem.get_multi_ptr<sycl::access::decorated::no>().get();
 
                 // carve reduction sections (each of size threadnum_local)
-                TVec3<f32>* sumssim1 = smem;                              // [0 .. threadnum-1]
-                TVec3<f32>* sumssim4 = sumssim1 + threadnum_local;        // [threadnum .. 2*threadnum-1]
-                TVec3<f32>* suma1    = sumssim4 + threadnum_local;        // ...
-                TVec3<f32>* suma4    = suma1 + threadnum_local;
-                TVec3<f32>* sumd1    = suma4 + threadnum_local;
-                TVec3<f32>* sumd4    = sumd1 + threadnum_local;
+                sycl::float3* sumssim1 = smem;                              // [0 .. threadnum-1]
+                sycl::float3* sumssim4 = sumssim1 + threadnum_local;        // [threadnum .. 2*threadnum-1]
+                sycl::float3* suma1    = sumssim4 + threadnum_local;        // ...
+                sycl::float3* suma4    = suma1 + threadnum_local;
+                sycl::float3* sumd1    = suma4 + threadnum_local;
+                sycl::float3* sumd4    = sumd1 + threadnum_local;
 
                 // --- compute m1 ---
                 GaussianSmartSharedLoad(sharedmem, im1, x, y, width, height, it);
                 GaussianSmart_Device(sharedmem, x, y, width, height, gaussiankernel, gaussiankernel_integral, it);
-                const TVec3<f32> m1 = sharedmem[(ly + 8) * 32 + (lx + 8)];
+                const sycl::float3 m1 = sharedmem[(ly + 8) * 32 + (lx + 8)];
                 it.barrier(sycl::access::fence_space::local_space);
 
                 // --- compute m2 ---
                 GaussianSmartSharedLoad(sharedmem, im2, x, y, width, height, it);
                 GaussianSmart_Device(sharedmem, x, y, width, height, gaussiankernel, gaussiankernel_integral, it);
-                const TVec3<f32> m2 = sharedmem[(ly + 8) * 32 + (lx + 8)];
+                const sycl::float3 m2 = sharedmem[(ly + 8) * 32 + (lx + 8)];
                 it.barrier(sycl::access::fence_space::local_space);
 
                 // --- su11 ---
                 GaussianSmartSharedLoadProduct(sharedmem, im1, im1, x, y, width, height, it);
                 GaussianSmart_Device(sharedmem, x, y, width, height, gaussiankernel, gaussiankernel_integral, it);
-                const TVec3<f32> su11 = sharedmem[(ly + 8) * 32 + (lx + 8)];
+                const sycl::float3 su11 = sharedmem[(ly + 8) * 32 + (lx + 8)];
                 it.barrier(sycl::access::fence_space::local_space);
 
                 // --- su22 ---
                 GaussianSmartSharedLoadProduct(sharedmem, im2, im2, x, y, width, height, it);
                 GaussianSmart_Device(sharedmem, x, y, width, height, gaussiankernel, gaussiankernel_integral, it);
-                const TVec3<f32> su22 = sharedmem[(ly + 8) * 32 + (lx + 8)];
+                const sycl::float3 su22 = sharedmem[(ly + 8) * 32 + (lx + 8)];
                 it.barrier(sycl::access::fence_space::local_space);
 
                 // --- su12 ---
                 GaussianSmartSharedLoadProduct(sharedmem, im1, im2, x, y, width, height, it);
                 GaussianSmart_Device(sharedmem, x, y, width, height, gaussiankernel, gaussiankernel_integral, it);
-                const TVec3<f32> su12 = sharedmem[(ly + 8) * 32 + (lx + 8)];
+                const sycl::float3 su12 = sharedmem[(ly + 8) * 32 + (lx + 8)];
                 it.barrier(sycl::access::fence_space::local_space);
 
                 // --- compute d0, d1, d2 (same math as before) ---
-                TVec3<f32> d0, d1, d2;
+                sycl::float3 d0, d1, d2;
                 if (x < width && y < height) {
-                    const TVec3<f32> m11 = m1 * m1;
-                    const TVec3<f32> m22 = m2 * m2;
-                    const TVec3<f32> m12 = m1 * m2;
-                    const TVec3<f32> m_diff = m1 - m2;
-                    TVec3<f32> num_m;
-                    TVec3<f32> num_s;
-                    num_m.fma(m_diff, m_diff * -1.0f, 1.0f);
-                    num_s.fma(su12 - m12, 2.0f, 0.0009f);
+                    const sycl::float3 m11 = m1 * m1;
+                    const sycl::float3 m22 = m2 * m2;
+                    const sycl::float3 m12 = m1 * m2;
+                    const sycl::float3 m_diff = m1 - m2;
+                    const sycl::float3 num_m = fma(m_diff, m_diff * -1.0f, 1.0f);
+                    const sycl::float3 num_s = fma(su12 - m12, 2.0f, 0.0009f);
 
-                    const TVec3<f32> denom_s = (su11 - m11) + (su22 - m22) + 0.0009f;
+                    const sycl::float3 denom_s = (su11 - m11) + (su22 - m22) + 0.0009f;
                     d0 = sycl::max(1.0f - ((num_m * num_s) / denom_s), 0.0f);
 
                     const sycl::float3 v1 = (sycl::fabs(im2[id] - m2) + 1.0f) /
                                           (sycl::fabs(im1[id] - m1) + 1.0f) - 1.0f;
-                    const TVec3<f32> artifact   = sycl::max(v1, 0.0f);
-                    const TVec3<f32> detailloss = sycl::max(v1 * -1.0f, 0.0f);
-                    d1 = artifact; d2 = detailloss;
+                    d1 = sycl::max(v1, 0.0f); // artifact
+                    d2 = sycl::max(v1 * -1.0f, 0.0f); //detailloss
                 } else {
-                    d0.zero(); d1.zero(); d2.zero();
+                    zeroVec(d0); zeroVec(d1); zeroVec(d2);
                 }
 
                 // write per-thread temporary accumulators into the shared arrays
@@ -185,10 +182,10 @@ void allscore_map_Kernel(
     }); // end q.submit
 }
 
-std::vector<TVec3<f32>> allscore_map(TVec3<f32>* im1, TVec3<f32>* im2, TVec3<f32>* temp, TVec3<f32>* pinned, int64_t basewidth, int64_t baseheight, int64_t maxshared, GaussianHandle& gaussianhandle, sycl::queue& stream){
+std::vector<sycl::float3> allscore_map(sycl::float3* im1, sycl::float3* im2, sycl::float3* temp, sycl::float3* pinned, int64_t basewidth, int64_t baseheight, int64_t maxshared, GaussianHandle& gaussianhandle, sycl::queue& stream){
      // output is {normssim1scale1, normssim4scale1, ..., normd4scale3} (18 vec3 pairs)
-    std::vector<TVec3<f32>> result(2 * 6 * 3);
-    for (auto& v : result) { v.zero(); }
+    std::vector<sycl::float3> result(2 * 6 * 3);
+    for (auto& v : result) { zeroVec(v); }
 
     constexpr int reduce_up_to = 256;
     int64_t w = basewidth;
@@ -214,19 +211,19 @@ std::vector<TVec3<f32>> allscore_map(TVec3<f32>* im1, TVec3<f32>* im2, TVec3<f32
                            gaussianhandle.gaussiankernel_integral_d,
                            bl_x, bl_y, th_x, th_y);
         
-        //printf("I got %s with %ld %ld %ld\n", hipGetErrorString(hipGetLastError()), 6*sizeof(TVec3<f32>)*th_x*th_y, bl_x, bl_y);
+        //printf("I got %s with %ld %ld %ld\n", hipGetErrorString(hipGetLastError()), 6*sizeof(sycl::float3)*th_x*th_y, bl_x, bl_y);
         //GPU_CHECK(hipGetLastError());
 
-        th_x = sycl::min((int64_t)(maxshared/(6*sizeof(TVec3<f32>)))/32*32, sycl::min((int64_t)1024, blr_x));
+        th_x = sycl::min((int64_t)(maxshared/(6*sizeof(sycl::float3)))/32*32, sycl::min((int64_t)1024, blr_x));
         int oscillate = 0; //3 sets of memory: real destination at 0, first at 6*bl_x for oscillate 0 and last at 12*bl_x for oscillate 1;
         int64_t oldblr_x = blr_x;
         while (blr_x >= reduce_up_to){
             blr_x = (blr_x - 1) / th_x + 1;
 
-            TVec3<f32>* dst_ptr =
+            sycl::float3* dst_ptr =
                 temp + scaleoutdone[scale] +
                 ((blr_x >= reduce_up_to) ? ((oscillate ^ 1) + 1) * 6 * bl_x * bl_y : 0);
-            TVec3<f32>* src_ptr =
+            sycl::float3* src_ptr =
                 temp + scaleoutdone[scale] + (oscillate + 1) * 6 * bl_x * bl_y;
 
             // launch sumreduce for this stage
@@ -235,7 +232,7 @@ std::vector<TVec3<f32>> allscore_map(TVec3<f32>* im1, TVec3<f32>* im2, TVec3<f32
                 sycl::range<1> global(blr_x * th_x);
 
                 stream.submit([&](sycl::handler& h) {
-                    sycl::local_accessor<TVec3<f32>, 1> smem(sycl::range<1>(6 * th_x), h);
+                    sycl::local_accessor<sycl::float3, 1> smem(sycl::range<1>(6 * th_x), h);
 
                     h.parallel_for(
                         sycl::nd_range<1>(global, local),
@@ -246,18 +243,18 @@ std::vector<TVec3<f32>> allscore_map(TVec3<f32>* im1, TVec3<f32>* im2, TVec3<f32
                             const int64_t block   = it.get_group_linear_id();
                             const int64_t blocks  = it.get_group_range(0);
 
-                            TVec3<f32>* shm = smem.get_multi_ptr<sycl::access::decorated::no>().get();
-                            TVec3<f32>* s1 = shm;
-                            TVec3<f32>* s4 = s1 + threads;
-                            TVec3<f32>* a1 = s4 + threads;
-                            TVec3<f32>* a4 = a1 + threads;
-                            TVec3<f32>* d1 = a4 + threads;
-                            TVec3<f32>* d4 = d1 + threads;
+                            sycl::float3* shm = smem.get_multi_ptr<sycl::access::decorated::no>().get();
+                            sycl::float3* s1 = shm;
+                            sycl::float3* s4 = s1 + threads;
+                            sycl::float3* a1 = s4 + threads;
+                            sycl::float3* a4 = a1 + threads;
+                            sycl::float3* d1 = a4 + threads;
+                            sycl::float3* d4 = d1 + threads;
 
                             if (x >= oldblr_x) {
-                                s1[th].zero(); s4[th].zero();
-                                a1[th].zero(); a4[th].zero();
-                                d1[th].zero(); d4[th].zero();
+                                zeroVec(s1[th]); zeroVec(s4[th]);
+                                zeroVec(a1[th]); zeroVec(a4[th]);
+                                zeroVec(d1[th]); zeroVec(d4[th]);
                             } else {
                                 s1[th] = src_ptr[x];
                                 s4[th] = src_ptr[x + oldblr_x];
@@ -302,10 +299,10 @@ std::vector<TVec3<f32>> allscore_map(TVec3<f32>* im1, TVec3<f32>* im2, TVec3<f32
         w = (w-1)/2+1;
         h = (h-1)/2+1;
     }
-    TVec3<f32>* hostback = pinned;
-    //printf("I am sending : %llu %llu %lld %d", hostback, temp, sizeof(TVec3<f32>)*scaleoutdone[6], stream);
-    //GPU_CHECK(hipMemcpyDtoHAsync(hostback, (hipDeviceptr_t)temp, sizeof(TVec3<f32>)*scaleoutdone[6], stream));
-    stream.memcpy(hostback, temp,  sizeof(TVec3<f32>)*scaleoutdone[6]).wait();
+    sycl::float3* hostback = pinned;
+    //printf("I am sending : %llu %llu %lld %d", hostback, temp, sizeof(sycl::float3)*scaleoutdone[6], stream);
+    //GPU_CHECK(hipMemcpyDtoHAsync(hostback, (hipDeviceptr_t)temp, sizeof(sycl::float3)*scaleoutdone[6], stream));
+    stream.memcpy(hostback, temp,  sizeof(sycl::float3)*scaleoutdone[6]).wait();
 
     //let s reduce!
     for (int scale = 0; scale < 6; scale++){

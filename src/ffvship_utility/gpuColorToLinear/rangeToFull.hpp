@@ -6,7 +6,7 @@ template <FFMS_ColorRanges RANGE_TYPE>
 void inline RangeLinearize(float& a);
 
 template <FFMS_ColorRanges RANGE_TYPE>
-void inline RangeLinearize(TVec3<f32>& a){
+void inline RangeLinearize(sycl::float3& a){
     RangeLinearize<RANGE_TYPE>(a.x());
     RangeLinearize<RANGE_TYPE>(a.y());
     RangeLinearize<RANGE_TYPE>(a.z());

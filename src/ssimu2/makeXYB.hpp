@@ -1,7 +1,7 @@
 #ifndef MAKEXYBHPP
 #define MAKEXYBHPP
 
-inline void opsin_absorbance(TVec3<f32>& a){
+inline void opsin_absorbance(sycl::float3& a){
     const f32 x = a.x();
     const f32 y = a.y();
     const f32 z = a.z();
@@ -23,11 +23,11 @@ inline void opsin_absorbance(TVec3<f32>& a){
     opsin_bias)));
 }
 
-inline void mixed_to_xyb(TVec3<f32>& a){
+inline void mixed_to_xyb(sycl::float3& a){
     a.y() += (a.x() = 0.5f * (a.x() - a.y()));
 }
 
-inline void linear_rgb_to_xyb(TVec3<f32>& a){
+inline void linear_rgb_to_xyb(sycl::float3& a){
     const float abs_bias = -0.1559542025327239f;
     opsin_absorbance(a);
     //printf("from %f to %f\n", a.x, cbrtf(a.x*((int)(a.x() >= 0))));
@@ -38,13 +38,13 @@ inline void linear_rgb_to_xyb(TVec3<f32>& a){
     mixed_to_xyb(a);
 }
 
-inline void make_positive_xyb(TVec3<f32>& a) {
+inline void make_positive_xyb(sycl::float3& a) {
     a.z() = (a.z() - a.y()) + 0.55f;
     a.y() += 0.01f;
     a.x() = a.x() * 14.0f + 0.42f;
 }
 
-inline void rgb_to_positive_xyb_d(TVec3<f32>& a){
+inline void rgb_to_positive_xyb_d(sycl::float3& a){
     linear_rgb_to_xyb(a);
     make_positive_xyb(a);
 }
@@ -63,13 +63,13 @@ inline void rgb_to_linrgbfunc(f32& a) {
     }
 }
 
-inline void rgb_to_linrgb(TVec3<f32>& a){
+inline void rgb_to_linrgb(sycl::float3& a){
     rgb_to_linrgbfunc(a.x());
     rgb_to_linrgbfunc(a.y());
     rgb_to_linrgbfunc(a.z());
 }
 
-void rgb_to_positive_xyb(TVec3<f32>* array, int64_t width, sycl::queue& q) {
+void rgb_to_positive_xyb(sycl::float3* array, int64_t width, sycl::queue& q) {
     int64_t th_x = std::min<int64_t>(256, width);
     int64_t bl_x = (width - 1) / th_x + 1;
 
@@ -88,7 +88,7 @@ void rgb_to_positive_xyb(TVec3<f32>* array, int64_t width, sycl::queue& q) {
     });
 }
 
-inline void rgb_to_linear(TVec3<f32>* array, int64_t width, sycl::queue &stream){
+inline void rgb_to_linear(sycl::float3* array, int64_t width, sycl::queue &stream){
     int64_t th_x = std::min<int64_t>(256, width);
     int64_t bl_x = (width - 1) / th_x + 1;
 

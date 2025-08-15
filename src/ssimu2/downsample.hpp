@@ -1,6 +1,6 @@
 namespace ssimu2{
 
-void downsample(TVec3<f32>* src, TVec3<f32>* dst, int64_t width, int64_t height, sycl::queue& q) {
+void downsample(sycl::float3* src, sycl::float3* dst, int64_t width, int64_t height, sycl::queue& q) {
         int64_t newh = (height - 1) / 2 + 1;
         int64_t neww = (width - 1) / 2 + 1;
 
