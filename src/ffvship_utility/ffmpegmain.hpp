@@ -39,12 +39,13 @@ class GpuWorker {
     MetricType selected_metric;
 
     ssimu2::SSIMU2ComputingImplementation ssimu2worker;
-    butter::ButterComputingImplementation butterworker;
+    //butter::ButterComputingImplementation butterworker;
 
   public:
-    GpuWorker(MetricType metric, int width, int height, float intensity_multiplier)
-        : image_width(width), image_height(height), selected_metric(metric) {
-        allocate_gpu_memory(intensity_multiplier);
+    GpuWorker(MetricType metric, int width, int height, float intensity_multiplier, int gpu_id)
+        : image_width(width), image_height(height), selected_metric(metric),
+        ssimu2worker(width, height, gpu_id) {
+        //allocate_gpu_memory(intensity_multiplier);
     }
     ~GpuWorker(){
         deallocate_gpu_memory();
@@ -72,64 +73,38 @@ class GpuWorker {
             return {s, s, s};
         }
 
-        if (selected_metric == MetricType::Butteraugli) {
+        /*if (selected_metric == MetricType::Butteraugli) {
             return butterworker.run<UINT16>(
                 nullptr, 0, source_channels, encoded_channels, stride_bytes);
-        }
+        }*/
 
         ASSERT_WITH_MESSAGE(false, "Unknown metric specified for GpuWorker.");
         return {0.0f, 0.0f, 0.0f};
     }
 
-    static uint8_t *allocate_external_rgb_buffer(int width, int height) {
+    static uint8_t *allocate_external_rgb_buffer(int width, int height, sycl::queue& q) {
         const size_t buffer_size_bytes = static_cast<size_t>(width) * height * sizeof(uint16_t) * 3;
-        uint8_t *buffer_ptr = nullptr;
-
-        const hipError_t result = hipHostMalloc(
-            reinterpret_cast<void **>(&buffer_ptr), buffer_size_bytes);
+        uint8_t *buffer_ptr = sycl::malloc_host<uint8_t>(buffer_size_bytes, q);
 
         ASSERT_WITH_MESSAGE(
-            result == hipSuccess && buffer_ptr != nullptr,
+            buffer_ptr,
             "Pinned buffer allocation failed in allocate_external_rgb_buffer");
 
         return buffer_ptr;
     }
 
-    static void deallocate_external_buffer(uint8_t *buffer_ptr) {
+    static void deallocate_external_buffer(uint8_t *buffer_ptr, sycl::queue& q) {
         if (buffer_ptr != nullptr) {
-            hipHostFree(buffer_ptr);
+            sycl::free(buffer_ptr, q);
         }
     }
 
   private:
-    void allocate_gpu_memory(float intensity_multiplier = 203) {
-        if (selected_metric == MetricType::SSIMULACRA2) {
-            try {
-                ssimu2worker.init(image_width, image_height);
-            } catch (const VshipError& e){
-                std::cerr << e.getErrorMessage() << std::endl;
-                ASSERT_WITH_MESSAGE(false, "Failed to initialize Butteraugli Worker");
-                return;
-            }
-        } else if (selected_metric == MetricType::Butteraugli) {
-            try {
-                butterworker.init(image_width, image_height, intensity_multiplier);
-            } catch (const VshipError& e){
-                std::cerr << e.getErrorMessage() << std::endl;
-                ASSERT_WITH_MESSAGE(false, "Failed to initialize Butteraugli Worker");
-                return;
-            }
-        } else {
-            ASSERT_WITH_MESSAGE(false,
-                                "Unknown metric during memory allocation.");
-        }
-    }
-
     void deallocate_gpu_memory() {
         if (selected_metric == MetricType::SSIMULACRA2) {
             ssimu2worker.destroy();
-        } else if (selected_metric == MetricType::Butteraugli) {
-            butterworker.destroy();
+        /*} else if (selected_metric == MetricType::Butteraugli) {
+            butterworker.destroy();*/
         }
     }
 };
@@ -524,7 +499,7 @@ MetricType parse_metric_name(const std::string &name) {
         lowered[i] = std::tolower(name[i]);
     }
     if (lowered == "ssimulacra2" || lowered == "ssimu2") return MetricType::SSIMULACRA2;
-    if (lowered == "butteraugli" || lowered == "butter") return MetricType::Butteraugli;
+    //if (lowered == "butteraugli" || lowered == "butter") return MetricType::Butteraugli;
     return MetricType::Unknown;
 }
 

@@ -128,7 +128,7 @@ int extractInfoFromPixelFormat(AVPixelFormat pix_fmt, Sample_Type& sample_type, 
 }
 
 //strides are for the source, width and height are for end video output (generally luma plane)
-int linearize(float* outplane[3], float* tempplane[3], const uint8_t* source_plane[3], int strides[3], int width, int height, AVPixelFormat pix_fmt, AVChromaLocation location, hipStream_t stream){
+int linearize(float* outplane[3], float* tempplane[3], const uint8_t* source_plane[3], int strides[3], int width, int height, AVPixelFormat pix_fmt, AVChromaLocation location, sycl::queue& q){
     Sample_Type sample_type;
     int subw;
     int subh;
@@ -139,16 +139,16 @@ int linearize(float* outplane[3], float* tempplane[3], const uint8_t* source_pla
 
     //first step, transform current integer/float format into a pure float
     int res = 1;
-    res &= convertToFloatPlaneSwitch(outplane[0], source_plane[0], strides[0], width, height, sample_type, stream); //get to outplane directly
-    res &= convertToFloatPlaneSwitch(tempplane[1], source_plane[1], strides[1], width >> subw, height >> subh, sample_type, stream);
-    res &= convertToFloatPlaneSwitch(tempplane[2], source_plane[2], strides[2], width >> subw, height >> subh, sample_type, stream);
+    res &= convertToFloatPlaneSwitch(outplane[0], source_plane[0], strides[0], width, height, sample_type, q); //get to outplane directly
+    res &= convertToFloatPlaneSwitch(tempplane[1], source_plane[1], strides[1], width >> subw, height >> subh, sample_type, q);
+    res &= convertToFloatPlaneSwitch(tempplane[2], source_plane[2], strides[2], width >> subw, height >> subh, sample_type, q);
     if (res != 0) {
         std::cout << "sample_type not supported" << std::endl;
         return res;
     }
 
     //second step, chroma upsample
-    if (upsample(outplane, tempplane, width, height, location, subw, subh, stream) != 0){ //this function does not transfer luma plane from temp to out!! so we directly get luma plane to out instead of temp since no modification is needed
+    if (upsample(outplane, tempplane, width, height, location, subw, subh, q) != 0){ //this function does not transfer luma plane from temp to out!! so we directly get luma plane to out instead of temp since no modification is needed
         std::cout << "Failed to upscale" << std::endl;
         return 1;
     }

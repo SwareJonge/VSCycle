@@ -16,37 +16,37 @@ PQ
 namespace VshipColorConvert{
 
 template <AVColorTransferCharacteristic TRANSFER_TYPE>
-__device__ void inline transferLinearize(float& a);
+void inline transferLinearize(float& a);
 
 //apply linear on all 3 components
 template <AVColorTransferCharacteristic TRANSFER_TYPE>
-__device__ void inline transferLinearize(float3& a){
-    transferLinearize<TRANSFER_TYPE>(a.x);
-    transferLinearize<TRANSFER_TYPE>(a.y);
-    transferLinearize<TRANSFER_TYPE>(a.z);
+void inline transferLinearize(TVec3<f32> a){
+    transferLinearize<TRANSFER_TYPE>(a.x());
+    transferLinearize<TRANSFER_TYPE>(a.y());
+    transferLinearize<TRANSFER_TYPE>(a.z());
 }
 
 
 //define transferLinearize
 
 template <>
-__device__ void inline transferLinearize<AVCOL_TRC_LINEAR>(float& a){
+void inline transferLinearize<AVCOL_TRC_LINEAR>(float& a){
 }
 
 //source Wikipedia
 template <>
-__device__ void inline transferLinearize<AVCOL_TRC_IEC61966_2_1>(float& a){
+void inline transferLinearize<AVCOL_TRC_IEC61966_2_1>(float& a){
     if (a < 0){
         if (a < -0.04045f){
-            a = -powf(((-a+0.055)*(1.0/1.055)), 2.4f);
+            a = -sycl::pow(((-a+0.055f)*(1.0f/1.055f)), 2.4f);
         } else {
-            a *= 1.0/12.92;
+            a *= 1.0f/12.92f;
         }
     } else {
         if (a > 0.04045f){
-            a = powf(((a+0.055)*(1.0/1.055)), 2.4f);
+            a = sycl::pow(((a+0.055f)*(1.0f/1.055f)), 2.4f);
         } else {
-            a *= 1.0/12.92;
+            a *= 1.0f/12.92f;
         }
     }
 }
@@ -54,57 +54,57 @@ __device__ void inline transferLinearize<AVCOL_TRC_IEC61966_2_1>(float& a){
 //source https://www.image-engineering.de/library/technotes/714-color-spaces-rec-709-vs-srgb
 //I inversed the function myself
 template <>
-__device__ void inline transferLinearize<AVCOL_TRC_BT709>(float& a){
+void inline transferLinearize<AVCOL_TRC_BT709>(float& a){
     if (a < 0){
         if (a < -0.081f){
-            a = -powf(((-a+0.099)/1.099), 2.2f);
+            a = -sycl::pow(((-a+0.099f)/1.099f), 2.2f);
         } else {
-            a *= 1.0/4.5;
+            a *= 1.0f/4.5f;
         }
     } else {
         if (a > 0.081f){
-            a = powf(((a+0.099)/1.099), 2.2f);
+            a = sycl::pow(((a+0.099f)/1.099f), 2.2f);
         } else {
-            a *= 1.0/4.5;
+            a *= 1.0f/4.5f;
         }
     }
 }
 
-__device__ inline void gamma_to_linrgbfunc(float& a, float gamma){
-    if (a < 0){
-        a = -powf(-a, gamma);
+inline void gamma_to_linrgbfunc(float& a, float gamma){
+    if (a < 0.0f){
+        a = -sycl::pow(-a, gamma);
     } else {
-        a = powf(a, gamma);
+        a = sycl::pow(a, gamma);
     }
 }
 
 template <>
-__device__ void inline transferLinearize<AVCOL_TRC_GAMMA22>(float& a){
+void inline transferLinearize<AVCOL_TRC_GAMMA22>(float& a){
     gamma_to_linrgbfunc(a, 2.2f);
 }
 
 template <>
-__device__ void inline transferLinearize<AVCOL_TRC_GAMMA28>(float& a){
+void inline transferLinearize<AVCOL_TRC_GAMMA28>(float& a){
     gamma_to_linrgbfunc(a, 2.8f);
 }
 
 //source https://github.com/haasn/libplacebo/blob/master/src/shaders/colorspace.c (14/05/2025 line 670)
 template <>
-__device__ void inline transferLinearize<AVCOL_TRC_SMPTE428>(float& a){
+void inline transferLinearize<AVCOL_TRC_SMPTE428>(float& a){
     gamma_to_linrgbfunc(a, 2.6f);
-    a *= 52.37/48.;
+    a *= 52.37f/48.f;
 }
 
 //source https://fr.wikipedia.org/wiki/Perceptual_Quantizer
 //Note: this is PQ
 template<>
-__device__ void inline transferLinearize<AVCOL_TRC_SMPTE2084>(float& a){
-    const float c1 = 107./128.;
-    const float c2 = 2413./128.;
-    const float c3 = 2392./128.;
-    a = powf(a, 32./2523.);
-    a = fmaxf(a - c1, 0.f)/(c2 - c3*a);
-    a = powf(a, 8192./1305.);
+void inline transferLinearize<AVCOL_TRC_SMPTE2084>(float& a){
+    const float c1 = 107.f/128.f;
+    const float c2 = 2413.f/128.f;
+    const float c3 = 2392.f/128.f;
+    a = sycl::pow(a, 32.f/2523.f);
+    a = sycl::fmax(a - c1, 0.f)/(c2 - c3*a);
+    a = sycl::pow(a, 8192.f/1305.f);
     a *= 10000;
 }
 
@@ -112,7 +112,7 @@ __device__ void inline transferLinearize<AVCOL_TRC_SMPTE2084>(float& a){
 //https://en.wikipedia.org/wiki/Hybrid_log%E2%80%93gamma
 //Note: this is HLG
 template<>
-__device__ void inline transferLinearize<AVCOL_TRC_ARIB_STD_B67>(float& a){
+void inline transferLinearize<AVCOL_TRC_ARIB_STD_B67>(float& a){
 
 }
 */

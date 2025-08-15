@@ -5,7 +5,7 @@ __device__ float MaskY(float delta) {
     const float scaler = 0.451936922203f;
     const float mul = 2.5485944793f;
     const float c = mul / ((scaler * delta) + offset);
-    const float retval = (1.0 + c)*(1.0/(0.79079917404f*17.83f));
+    const float retval = (1.0f + c)*(1.0f/(0.79079917404ff*17.83f));
     return retval * retval;
 }
 

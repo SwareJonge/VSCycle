@@ -12,7 +12,7 @@
 #include "util/preprocessor.hpp"
 #include "util/concurrency.hpp"
 
-#include "butter/main.hpp"
+//#include "butter/main.hpp"
 #include "ssimu2/main.hpp"
 
 #include "ffvship_utility/ProgressBar.hpp"
@@ -308,9 +308,12 @@ int main(int argc, char **argv) {
 
     if (cli_args.live_index_score_output) std::cout << num_frames << std::endl;
 
+
+    auto devices = sycl::device::get_devices(sycl::info::device_type::gpu);
     std::set<uint8_t *> frame_buffers;
     for (unsigned int i = 0; i < num_frame_buffer; ++i) {
-        frame_buffers.insert(GpuWorker::allocate_external_rgb_buffer(width, height));
+        sycl::queue q(devices[cli_args.gpu_id], sycl::property::queue::in_order{});
+        frame_buffers.insert(GpuWorker::allocate_external_rgb_buffer(width, height, q));
     }
 
     frame_pool_t frame_buffer_pool(frame_buffers);
@@ -320,7 +323,7 @@ int main(int argc, char **argv) {
     gpu_workers.reserve(num_gpus);
 
     for (int i = 0; i < num_gpus; i++){
-        gpu_workers.emplace_back(cli_args.metric, width, height, cli_args.intensity_target_nits);
+        gpu_workers.emplace_back(cli_args.metric, width, height, cli_args.intensity_target_nits, cli_args.gpu_id);
     }
 
     std::vector<std::thread> reader_threads;

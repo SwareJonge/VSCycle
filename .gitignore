@@ -7,6 +7,12 @@ test.cpp
 *.mkv
 *.ffindex
 
+*.asm
+*.bat
+include/libavutil/*.h
+include/ffms.h
+include/zimg.h
+
 # Prerequisites
 *.d
 
